@@ -1,0 +1,115 @@
+#!/bin/bash
+
+### IF asking for help print...
+if [ "$1" == "-h" ] ; then
+        echo -e "two ways to run the script\n\t1) without parameters runs on the computer with the GPU installed and has command nvidia-sm"
+                                echo -e "\t2)runs with ssh to -H for hostname -u for username -p for password and get information of GPU"
+                                shift # past argument
+                                exit 1
+fi
+
+# default Parameters
+TempWarn=40
+TempCritical=48
+PercentWarn=80
+PercentCritical=90
+
+
+TempFile="/tmp/$$.gpu.temp"
+if [ $# -eq 0  ] ; then
+        nvidia-smi > ${TempFile}
+else
+        while [[ $# > 1 ]]
+        do
+                key="$1"
+
+                case $key in
+                        -H|--host)
+                                HostName="$2"
+                                shift # past argument
+                                ;;
+                        -u|--username)
+                                UserName="$2"
+                                shift # past argument
+                                ;;
+                        -p|--password)
+                                Password="$2"
+                                shift # past argument
+                                ;;
+                esac
+                shift # past argument or value
+        done
+#       echo "/usr/bin/exp ${Password}  ssh -o StrictHostKeyChecking=no ${UserName}@${HostName} nvidia-sm  > ${TempFile} "
+        /usr/bin/exp ${Password}  ssh -o StrictHostKeyChecking=no ${UserName}@${HostName} nvidia-smi > ${TempFile}
+fi
+
+AAA=`cat ${TempFile} | sed -n '/Fan  Temp/{n;n;n;p}'`
+GPUTemp=`echo $AAA | awk '{print $3}' |sed 's/C//' `
+GPUWattCurr=`echo $AAA | awk '{print $5}' | sed 's/W//' `
+GPUWattMax=`echo $AAA | awk '{print $7}' | sed 's/W//' `
+GPUWattPer=`echo "scale=1;  ${GPUWattCurr}/${GPUWattMax}* 100" | bc | awk -F\. '{print $1}'`
+GpuMemCurr=`echo $AAA | awk '{print $9}'| sed 's/MiB//'`
+GpuMemMax=`echo $AAA | awk '{print $11}'| sed 's/MiB//'`
+GPUMemPer=`echo "scale=1;  ${GpuMemCurr}/${GpuMemMax}* 100" | bc | awk -F\. '{print $1}'`
+GpuUsage=`echo $AAA | awk '{print $13}'| sed 's/%//' `
+GpuProcesses=`cat ${TempFile} | grep -v "+-------------------------------------" |  sed -n '/GPU       PID/{n;n;p;n;p;n;p}' | wc -l`
+
+#echo -e "GPU Usage: ${GpuUsage}\n\tGpu Temp:${GPUTemp}"
+#echo -e "\tGPU Watts: ${GPUWattCurr} of ${GPUWattMax} ${GPUWattPer}%"
+#echo -e "\tGpu Memory:${GpuMemCurr} of ${GpuMemMax} ${GPUMemPer}"
+
+
+if  [ ${GPUTemp} -gt ${TempWarn} ]  && [ ${GPUTemp} -lt ${TempCritical} ] ; then
+                echo "WARNING: Tempreture of GPU is ${GPUTemp}"
+                exit 1
+fi
+
+if [ ${GPUTemp} -gt ${TempCritical} ] ; then
+                echo "CRITICAL: GPU Temp is high ${GPUTemp}C"
+                exit 2
+fi
+
+###############################################################
+## For Gpu Usage
+if  [ ${GpuUsage} -gt ${PercentWarn} ]  && [ ${GpuUsage} -lt ${PercentCritical} ] ; then
+                echo "WARNING: Usage of GPU is ${GpuUsage}%"
+                exit 1
+fi
+
+if [ ${GpuUsage} -gt ${PercentCritical} ] ; then
+                echo "CRITICAL: GPU Usage is high ${GpuUsage}%"
+                exit 2
+fi
+
+###############################################################
+## For Gpu Watt
+
+if  [ ${GPUWattPer} -gt ${PercentWarn} ]  && [ ${GPUWattPer} -lt ${PercentCritical} ] ; then
+                echo "WARNING: Usage of GPU Watts is ${GPUWattPer}%"
+                exit 1
+fi
+
+if [ ${GPUWattPer} -gt ${PercentCritical} ] ; then
+                echo "CRITICAL: GPU high Watt usage ${GPUWattPer}%"
+                exit 2
+fi
+
+###############################################################
+## For Gpu Memory
+
+if  [ ${GPUMemPer} -gt ${PercentWarn} ]  && [ ${GPUMemPer} -lt ${PercentCritical} ] ; then
+                echo "WARNING: Usage of GPU Memory is ${GPUMemPer}%"
+                exit 1
+fi
+
+if [ ${GPUMemPer} -gt ${PercentCritical} ] ; then
+                echo "CRITICAL: GPU Memory Usage is high ${GPUMemPer}%"
+                exit 2
+fi
+
+####### IF all is Ok then : ####################################
+
+\rm ${TempFile}
+
+echo "OK: Gpu Usage ${GpuUsage}% | '#Processes'=${GpuProcesses} 'Usage'=${GpuUsage}%;80;90;0;100 'Watt'=${GPUWattPer}%;80;90;0;100 'Memory'=${GPUMemPer}%;80;90;0;
+100 'Temp'=${GPUTemp}" && exit 0
